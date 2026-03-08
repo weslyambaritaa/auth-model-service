@@ -90,4 +90,52 @@ class KeycloakAdminService
 
         return true;
     }
+
+    // 3. Sinkronisasi Role (Update) ke Keycloak
+    public function syncUserRoles($email, $newRoles)
+    {
+        $token = $this->getAdminToken();
+
+        // A. Cari ID User di Keycloak berdasarkan email
+        $userResponse = Http::withToken($token)->get("{$this->baseUrl}/admin/realms/{$this->realm}/users", [
+            'email' => $email,
+            'exact' => true,
+        ]);
+        
+        if (empty($userResponse->json())) {
+            return false; // Abaikan jika user tidak ada di Keycloak
+        }
+        
+        $kcUserId = $userResponse->json()[0]['id'];
+
+        // B. Ambil daftar role yang sedang nempel di user tersebut saat ini
+        $currentRolesResp = Http::withToken($token)->get("{$this->baseUrl}/admin/realms/{$this->realm}/users/{$kcUserId}/role-mappings/realm");
+        $currentRoles = $currentRolesResp->json();
+
+        // C. Hapus/Cabut semua role lama (agar bersih)
+        if (!empty($currentRoles)) {
+            Http::withToken($token)
+                ->withHeaders(['Content-Type' => 'application/json'])
+                ->delete("{$this->baseUrl}/admin/realms/{$this->realm}/users/{$kcUserId}/role-mappings/realm", $currentRoles);
+        }
+
+        // D. Tembakkan (Assign) role yang baru
+        foreach ($newRoles as $roleName) {
+            $roleResp = Http::withToken($token)->get("{$this->baseUrl}/admin/realms/{$this->realm}/roles/{$roleName}");
+            if ($roleResp->successful()) {
+                $roleData = $roleResp->json();
+                
+                Http::withToken($token)
+                    ->withHeaders(['Content-Type' => 'application/json'])
+                    ->post("{$this->baseUrl}/admin/realms/{$this->realm}/users/{$kcUserId}/role-mappings/realm", [
+                    [
+                        'id' => $roleData['id'],
+                        'name' => $roleData['name']
+                    ]
+                ]);
+            }
+        }
+
+        return true;
+    }
 }
